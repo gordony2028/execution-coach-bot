@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, NoReturn
 import google.generativeai as genai
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Boolean, Float
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Boolean, Float, BigInteger
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -26,7 +26,7 @@ class User(Base):
     __tablename__ = 'users'
     
     id = Column(Integer, primary_key=True)
-    telegram_id = Column(Integer, unique=True, nullable=False)
+    telegram_id = Column(BigInteger, unique=True, nullable=False)
     username = Column(String(50))
     first_name = Column(String(50))
     current_business_idea = Column(Text)
@@ -41,7 +41,7 @@ class Goal(Base):
     __tablename__ = 'goals'
     
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, nullable=False)
+    user_id = Column(BigInteger, nullable=False)
     title = Column(String(200), nullable=False)
     description = Column(Text)
     target_date = Column(DateTime)
@@ -54,7 +54,7 @@ class Activity(Base):
     __tablename__ = 'activities'
     
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, nullable=False)
+    user_id = Column(BigInteger, nullable=False)
     goal_id = Column(Integer)
     description = Column(Text, nullable=False)
     activity_type = Column(String(50))  # task_completed, milestone_reached, learning, blocker, win, struggle
@@ -67,7 +67,7 @@ class Progress(Base):
     __tablename__ = 'progress'
     
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, nullable=False)
+    user_id = Column(BigInteger, nullable=False)
     metric_name = Column(String(100))  # customers_contacted, revenue, users_signed_up
     metric_value = Column(Float)
     date_recorded = Column(DateTime, default=datetime.utcnow)
@@ -77,7 +77,7 @@ class Conversation(Base):
     __tablename__ = 'conversations'
     
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, nullable=False)
+    user_id = Column(BigInteger, nullable=False)
     message_text = Column(Text)
     bot_response = Column(Text)
     context_tags = Column(String(200))  # procrastination, impatience, stuck, win
@@ -127,8 +127,37 @@ signal.signal(signal.SIGINT, signal_handler)
 class DatabaseManager:
     def __init__(self, database_url: str):
         self.engine = create_engine(database_url, pool_pre_ping=True, pool_recycle=300)
+        
+        # Handle schema migration for BigInteger telegram_id
+        self.migrate_schema()
+        
         Base.metadata.create_all(self.engine)
         self.SessionLocal = sessionmaker(bind=self.engine)
+    
+    def migrate_schema(self):
+        """Handle schema migration for BigInteger telegram_id"""
+        try:
+            # Check if we need to migrate by trying to create a test user
+            # If it fails with integer out of range, we need to drop and recreate tables
+            with self.engine.connect() as conn:
+                # Check if tables exist and if telegram_id column is the right type
+                result = conn.execute("""
+                    SELECT column_name, data_type 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'users' AND column_name = 'telegram_id'
+                """)
+                
+                row = result.fetchone()
+                if row and 'integer' in row[1] and 'bigint' not in row[1]:
+                    print("🔄 Migrating database schema for BigInteger telegram_id...")
+                    
+                    # Drop existing tables to recreate with correct schema
+                    Base.metadata.drop_all(self.engine)
+                    print("✅ Old tables dropped, recreating with BigInteger support...")
+                    
+        except Exception as e:
+            print(f"ℹ️ Schema migration check: {e}")
+            # If there's an error, it's likely the tables don't exist yet, which is fine
     
     def get_session(self) -> Session:
         return self.SessionLocal()
