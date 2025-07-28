@@ -390,70 +390,7 @@ You are a specialized execution coach for solo entrepreneurs who struggle with p
 
 Always provide immediate, actionable advice that accounts for being a solo entrepreneur with limited resources.
         """
-    
-    def create_coaching_prompt(self, message: str, context_data: Dict) -> str:
-        """Create a comprehensive prompt for Gemini based on user context"""
-        
-        user = context_data.get('user')
-        recent_activities = context_data.get('recent_activities', [])
-        active_goals = context_data.get('active_goals', [])
-        streak = context_data.get('current_streak', 0)
-        phase = context_data.get('execution_phase', 'planning')
-        total_activities = context_data.get('total_activities', 0)
-        days_since_start = context_data.get('days_since_start', 0)
-        
-        # Build context summary
-        activities_summary = ""
-        if recent_activities:
-            activities_summary = "Recent activities:\n"
-            for activity in recent_activities[:5]:
-                activities_summary += f"- {activity.description} ({activity.activity_type})\n"
-        
-        goals_summary = ""
-        if active_goals:
-            goals_summary = "Current goals:\n"
-            for goal in active_goals:
-                goals_summary += f"- {goal.title} (due: {goal.target_date})\n"
-        
-        business_context = f"Business idea: {user.current_business_idea}" if user and user.current_business_idea else "No business idea set yet"
-        
-        prompt = f"""
-You are an expert execution coach for solo entrepreneurs. You specialize in helping people who struggle with:
-1. Procrastination and getting started
-2. Impatience when results don't come quickly
-3. Working with limited resources as a solo founder
-4. Building credibility without a track record
 
-USER CONTEXT:
-- Name: {user.first_name if user else 'User'}
-- {business_context}
-- Execution phase: {phase}
-- Days using coach: {days_since_start}
-- Current streak: {streak} days
-- Total actions taken: {total_activities}
-
-{activities_summary}
-
-{goals_summary}
-
-USER MESSAGE: "{message}"
-
-COACHING GUIDELINES:
-- Be encouraging but realistic
-- Reference their specific history and patterns
-- Give concrete, actionable advice
-- Keep responses under 200 words
-- Use emojis sparingly but effectively
-- Address their specific challenges (procrastination, impatience, resource constraints)
-- Acknowledge progress and patterns you notice
-- If they're stuck, suggest a 5-minute micro-action
-- If they're impatient, remind them of realistic timelines for solo entrepreneurs
-- If they achieved something, celebrate and ask what they learned
-
-Provide a personalized coaching response that shows you understand their journey and current situation.
-"""
-        return prompt
-    
     async def generate_business_ideas(self, context_data: Dict, user_request: str = "") -> str:
         """Generate business ideas using specialized prompt"""
         if not self.enabled:
@@ -507,6 +444,67 @@ Provide a comprehensive market research analysis for this topic. Include market 
         except Exception as e:
             print(f"Market research error: {e}")
             return "Unable to complete research at the moment. Please try again later."
+
+    def create_coaching_prompt(self, message: str, context_data: Dict) -> str:
+        """Create a comprehensive prompt for Gemini based on user context"""
+        
+        user = context_data.get('user')
+        recent_activities = context_data.get('recent_activities', [])
+        active_goals = context_data.get('active_goals', [])
+        streak = context_data.get('current_streak', 0)
+        phase = context_data.get('execution_phase', 'planning')
+        total_activities = context_data.get('total_activities', 0)
+        days_since_start = context_data.get('days_since_start', 0)
+        
+        # Build context summary
+        activities_summary = ""
+        if recent_activities:
+            activities_summary = "Recent activities:\n"
+            for activity in recent_activities[:5]:
+                activities_summary += f"- {activity.description} ({activity.activity_type})\n"
+        
+        goals_summary = ""
+        if active_goals:
+            goals_summary = "Current goals:\n"
+            for goal in active_goals:
+                goals_summary += f"- {goal.title} (due: {goal.target_date})\n"
+        
+        business_context = f"Business idea: {user.current_business_idea}" if user and user.current_business_idea else "No business idea set yet"
+        
+        full_prompt = f"""
+{self.execution_coach_prompt}
+
+## USER CONTEXT:
+- Name: {user.first_name if user else 'User'}
+- {business_context}
+- Execution phase: {phase}
+- Days using coach: {days_since_start}
+- Current streak: {streak} days
+- Total actions taken: {total_activities}
+
+{activities_summary}
+
+{goals_summary}
+
+## USER MESSAGE: "{message}"
+
+## COACHING GUIDELINES:
+- Be encouraging but realistic
+- Reference their specific history and patterns
+- Give concrete, actionable advice
+- Keep responses under 200 words
+- Use emojis sparingly but effectively
+- Address their specific challenges (procrastination, impatience, resource constraints)
+- Acknowledge progress and patterns you notice
+- If they're stuck, suggest a 5-minute micro-action
+- If they're impatient, remind them of realistic timelines for solo entrepreneurs
+- If they achieved something, celebrate and ask what they learned
+
+Provide a personalized coaching response that shows you understand their journey and current situation.
+        """
+        return full_prompt
+    
+    async def generate_response(self, message: str, context_data: Dict) -> str:
         """Generate AI-powered coaching response"""
         if not self.enabled:
             return self.fallback_response(message, context_data)
@@ -795,7 +793,7 @@ Let's start! What's your current business idea or project?
         progress_msg += f"\n💪 Keep building momentum! Every action counts."
         
         await update.message.reply_text(progress_msg)
-    
+
     async def show_agent_modes(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         modes_msg = """
 🤖 **Available Agent Modes**
@@ -856,8 +854,6 @@ All modes remember your history, goals, and patterns to provide personalized ins
         else:
             await update.message.reply_text(final_response)
     
-    async def set_goal(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-    
     async def market_research_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not context.args:
             await update.message.reply_text(
@@ -895,6 +891,8 @@ All modes remember your history, goals, and patterns to provide personalized ins
                 await update.message.reply_text(part)
         else:
             await update.message.reply_text(final_response)
+    
+    async def set_goal(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if context.args:
             goal_text = ' '.join(context.args)
             session = self.db.get_session()
