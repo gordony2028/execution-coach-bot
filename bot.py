@@ -9,7 +9,14 @@ import sys
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, NoReturn
 
-import google.generativeai as genai
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ Google Generative AI not available: {e}")
+    GEMINI_AVAILABLE = False
+    genai = None
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Boolean, Float, BigInteger
@@ -298,12 +305,50 @@ class GeminiCoach:
             print(f"🔑 API Key length: {len(api_key)} characters")
             print(f"🔑 API Key starts with: {api_key[:10]}...")
         
-        if api_key:
+        if not GEMINI_AVAILABLE:
+            print("❌ Google Generative AI library not available")
+            self.enabled = False
+            self.model = None
+        elif api_key:
             try:
                 genai.configure(api_key=api_key)
-                self.model = genai.GenerativeModel('gemini-pro')
-                self.enabled = True
-                print("✅ Gemini AI configured successfully")
+                
+                # Try different model names that might work
+                model_names_to_try = [
+                    'gemini-1.5-flash',  # Latest model
+                    'gemini-1.5-pro',    # Pro version  
+                    'gemini-pro',        # Original
+                    'models/gemini-1.5-flash',  # With models prefix
+                    'models/gemini-pro'  # With models prefix
+                ]
+                
+                self.model = None
+                self.enabled = False
+                
+                for model_name in model_names_to_try:
+                    try:
+                        print(f"🧪 Trying model: {model_name}")
+                        self.model = genai.GenerativeModel(model_name)
+                        
+                        # Test the model with a simple prompt (synchronously during init)
+                        try:
+                            test_response = self.model.generate_content("Say 'test'")
+                            if test_response and test_response.text:
+                                print(f"✅ Successfully configured with model: {model_name}")
+                                self.enabled = True
+                                self.model_name = model_name
+                                break
+                        except Exception as test_error:
+                            print(f"❌ Model {model_name} test failed: {test_error}")
+                            continue
+                        
+                    except Exception as model_error:
+                        print(f"❌ Model {model_name} failed: {model_error}")
+                        continue
+                
+                if not self.enabled:
+                    print("❌ All Gemini models failed to initialize")
+                    
             except Exception as e:
                 print(f"❌ Gemini AI configuration failed: {e}")
                 self.enabled = False
@@ -436,8 +481,8 @@ Always provide immediate, actionable advice that accounts for being a solo entre
 
     async def generate_business_ideas(self, context_data: Dict, user_request: str = "") -> str:
         """Generate business ideas using specialized prompt"""
-        if not self.enabled:
-            return "💡 Gemini AI not available. Please add your API key for business idea generation."
+        if not self.enabled or not self.model:
+            return "💡 Gemini AI not available. Please check API configuration for business idea generation."
         
         user = context_data.get('user')
         current_idea = user.current_business_idea if user else None
@@ -463,8 +508,8 @@ Based on this context, provide 3-5 creative business ideas that would be suitabl
     
     async def conduct_market_research(self, context_data: Dict, research_topic: str) -> str:
         """Conduct market research using specialized prompt"""
-        if not self.enabled:
-            return "📊 Gemini AI not available. Please add your API key for market research."
+        if not self.enabled or not self.model:
+            return "📊 Gemini AI not available. Please check API configuration for market research."
         
         user = context_data.get('user')
         current_idea = user.current_business_idea if user else None
@@ -554,8 +599,8 @@ Provide a personalized coaching response that shows you understand their journey
         print(f"🤖 Gemini AI enabled: {self.enabled}")
         print(f"📝 User message: {message[:50]}...")
         
-        if not self.enabled:
-            print("⚠️ Gemini AI not enabled, using fallback")
+        if not self.enabled or not self.model:
+            print("⚠️ Gemini AI not enabled or model not available, using fallback")
             return self.fallback_response(message, context_data)
         
         try:
@@ -563,7 +608,7 @@ Provide a personalized coaching response that shows you understand their journey
             prompt = self.create_coaching_prompt(message, context_data)
             print(f"📋 Prompt length: {len(prompt)} characters")
             
-            print("🌐 Calling Gemini API...")
+            print(f"🌐 Calling Gemini API with model: {getattr(self, 'model_name', 'unknown')}...")
             response = await asyncio.to_thread(self.model.generate_content, prompt)
             print(f"📨 Gemini response received: {bool(response)}")
             
@@ -940,7 +985,7 @@ All modes remember your history, goals, and patterns to provide personalized ins
             # Simple test prompt
             test_response = await asyncio.to_thread(
                 self.gemini_coach.model.generate_content, 
-                "Say 'Hello! Gemini AI is working correctly.' and nothing else."
+                "Say 'Hello! Gemini AI is working correctly with model: " + getattr(self.gemini_coach, 'model_name', 'unknown') + "' and nothing else."
             )
             
             if test_response and test_response.text:
@@ -949,7 +994,7 @@ All modes remember your history, goals, and patterns to provide personalized ins
                 await update.message.reply_text("❌ Gemini AI returned empty response.")
                 
         except Exception as e:
-            await update.message.reply_text(f"❌ Gemini AI Test Failed:\n{str(e)}")
+            await update.message.reply_text(f"❌ Gemini AI Test Failed:\nError: {str(e)}\n\nThis might be a model access issue. Try regenerating your API key at https://makersuite.google.com/app/apikey")
     
     async def debug_info(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show debug information"""
@@ -963,6 +1008,7 @@ All modes remember your history, goals, and patterns to provide personalized ins
 **API Status:**
 • Gemini AI: {'✅ Enabled' if self.gemini_coach.enabled else '❌ Disabled'}
 • API Key Set: {'✅ Yes' if self.gemini_coach.api_key else '❌ No'}
+• Model Used: {getattr(self.gemini_coach, 'model_name', 'None')}
 
 **User Context:**
 • User ID: {user_id}
