@@ -996,7 +996,42 @@ Reply with what you accomplished or use /stuck if you're feeling blocked. 💪
         """Start the bot and scheduler"""
         self.scheduler.start()
         print("⏰ Scheduler started - daily check-ins and weekly reminders active")
+        
+        # Start port binding for Render (required for web services)
+        self.start_port_binding()
+        
+        # Start bot polling
         self.app.run_polling()
+    
+    def start_port_binding(self):
+        """Bind to port to satisfy Render web service requirements"""
+        import threading
+        from http.server import HTTPServer, BaseHTTPRequestHandler
+        
+        class HealthHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == '/health':
+                    self.send_response(200)
+                    self.send_header('Content-type', 'text/plain')
+                    self.end_headers()
+                    self.wfile.write(b'Bot is running')
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+            
+            def log_message(self, format, *args):
+                # Suppress HTTP server logs
+                pass
+        
+        def run_server():
+            port = int(os.getenv('PORT', 10000))
+            server = HTTPServer(('0.0.0.0', port), HealthHandler)
+            print(f"🌐 Health server started on port {port}")
+            server.serve_forever()
+        
+        # Run HTTP server in background thread
+        server_thread = threading.Thread(target=run_server, daemon=True)
+        server_thread.start()
 
 # Main execution
 if __name__ == "__main__":
