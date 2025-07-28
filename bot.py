@@ -292,12 +292,26 @@ class UserContext:
 class GeminiCoach:
     def __init__(self, api_key: str = None):
         self.api_key = api_key
+        
+        print(f"🔑 Gemini API Key provided: {'Yes' if api_key else 'No'}")
         if api_key:
-            genai.configure(api_key=api_key)
-            self.model = genai.GenerativeModel('gemini-pro')
-            self.enabled = True
+            print(f"🔑 API Key length: {len(api_key)} characters")
+            print(f"🔑 API Key starts with: {api_key[:10]}...")
+        
+        if api_key:
+            try:
+                genai.configure(api_key=api_key)
+                self.model = genai.GenerativeModel('gemini-pro')
+                self.enabled = True
+                print("✅ Gemini AI configured successfully")
+            except Exception as e:
+                print(f"❌ Gemini AI configuration failed: {e}")
+                self.enabled = False
+                self.model = None
         else:
             self.enabled = False
+            self.model = None
+            print("⚠️ Gemini AI disabled - no API key provided")
         
         # Load specialized agent prompts
         self.load_specialized_prompts()
@@ -535,20 +549,36 @@ Provide a personalized coaching response that shows you understand their journey
     
     async def generate_response(self, message: str, context_data: Dict) -> str:
         """Generate AI-powered coaching response"""
+        
+        # Debug logging
+        print(f"🤖 Gemini AI enabled: {self.enabled}")
+        print(f"📝 User message: {message[:50]}...")
+        
         if not self.enabled:
+            print("⚠️ Gemini AI not enabled, using fallback")
             return self.fallback_response(message, context_data)
         
         try:
+            print("🔄 Creating coaching prompt...")
             prompt = self.create_coaching_prompt(message, context_data)
+            print(f"📋 Prompt length: {len(prompt)} characters")
+            
+            print("🌐 Calling Gemini API...")
             response = await asyncio.to_thread(self.model.generate_content, prompt)
+            print(f"📨 Gemini response received: {bool(response)}")
             
             if response and response.text:
-                return response.text.strip()
+                response_text = response.text.strip()
+                print(f"✅ Gemini response length: {len(response_text)} characters")
+                print(f"🎯 First 100 chars: {response_text[:100]}...")
+                return response_text
             else:
+                print("❌ Gemini response empty or invalid")
                 return self.fallback_response(message, context_data)
                 
         except Exception as e:
             print(f"⚠️ Gemini API error: {e}")
+            print(f"🔍 Error type: {type(e).__name__}")
             return self.fallback_response(message, context_data)
     
     def fallback_response(self, message: str, context_data: Dict) -> str:
@@ -599,6 +629,10 @@ class ExecutionCoachBot:
         self.app.add_handler(CommandHandler("ideas", self.generate_business_ideas_command))
         self.app.add_handler(CommandHandler("research", self.market_research_command))
         self.app.add_handler(CommandHandler("modes", self.show_agent_modes))
+        
+        # Debug Commands
+        self.app.add_handler(CommandHandler("test", self.test_gemini))
+        self.app.add_handler(CommandHandler("debug", self.debug_info))
         
         # Message handlers
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
@@ -708,6 +742,8 @@ Let's start! What's your current business idea or project?
         user_id = update.effective_user.id
         message_text = update.message.text
         
+        print(f"👤 Message from user {user_id}: {message_text}")
+        
         # Ensure user exists
         self.db.get_or_create_user(update.effective_user)
         
@@ -715,12 +751,21 @@ Let's start! What's your current business idea or project?
         user_context = UserContext(self.db, user_id)
         context_data = user_context.get_user_data()
         
+        # Debug context
+        print(f"📊 Context loaded - User: {context_data.get('user', {}).first_name if context_data.get('user') else 'None'}")
+        print(f"🔥 Streak: {context_data.get('current_streak', 0)}")
+        print(f"🚀 Phase: {context_data.get('execution_phase', 'unknown')}")
+        print(f"📈 Activities: {len(context_data.get('recent_activities', []))}")
+        
         # Generate AI-powered response
         response = await self.gemini_coach.generate_response(message_text, context_data)
         
         # Determine response type and context tags
         response_type = "gemini" if self.gemini_coach.enabled else "fallback"
         context_tags = self.analyze_message_context(message_text)
+        
+        print(f"🤖 Response type: {response_type}")
+        print(f"📝 Response length: {len(response)} characters")
         
         # Log conversation
         session = self.db.get_session()
@@ -882,6 +927,59 @@ All modes remember your history, goals, and patterns to provide personalized ins
                 await update.message.reply_text(part)
         else:
             await update.message.reply_text(final_response)
+    
+    async def test_gemini(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Test Gemini AI directly"""
+        await update.message.reply_text("🧪 Testing Gemini AI connection...")
+        
+        if not self.gemini_coach.enabled:
+            await update.message.reply_text("❌ Gemini AI not enabled. Check GEMINI_API_KEY environment variable.")
+            return
+        
+        try:
+            # Simple test prompt
+            test_response = await asyncio.to_thread(
+                self.gemini_coach.model.generate_content, 
+                "Say 'Hello! Gemini AI is working correctly.' and nothing else."
+            )
+            
+            if test_response and test_response.text:
+                await update.message.reply_text(f"✅ Gemini AI Test Result:\n{test_response.text.strip()}")
+            else:
+                await update.message.reply_text("❌ Gemini AI returned empty response.")
+                
+        except Exception as e:
+            await update.message.reply_text(f"❌ Gemini AI Test Failed:\n{str(e)}")
+    
+    async def debug_info(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show debug information"""
+        user_id = update.effective_user.id
+        user_context = UserContext(self.db, user_id)
+        context_data = user_context.get_user_data()
+        
+        debug_msg = f"""
+🔍 **Debug Information**
+
+**API Status:**
+• Gemini AI: {'✅ Enabled' if self.gemini_coach.enabled else '❌ Disabled'}
+• API Key Set: {'✅ Yes' if self.gemini_coach.api_key else '❌ No'}
+
+**User Context:**
+• User ID: {user_id}
+• Name: {context_data.get('user', {}).first_name if context_data.get('user') else 'Unknown'}
+• Streak: {context_data.get('current_streak', 0)} days
+• Phase: {context_data.get('execution_phase', 'unknown')}
+• Total Activities: {context_data.get('total_activities', 0)}
+• Recent Activities: {len(context_data.get('recent_activities', []))}
+
+**Database:**
+• User Exists: {'✅ Yes' if context_data.get('user') else '❌ No'}
+• Goals: {len(context_data.get('active_goals', []))}
+
+Use /test to test Gemini AI directly.
+        """
+        
+        await update.message.reply_text(debug_msg)
     
     async def market_research_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not context.args:
@@ -1069,16 +1167,19 @@ if __name__ == "__main__":
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
-    print("🚀 Execution Coach Bot with Gemini AI starting on Render...")
+    print("🚀 Execution Coach Bot with Gemini AI starting...")
     
     config = RenderConfig()
     config.validate()
     
     print(f"📊 Database URL configured: {config.DATABASE_URL[:30]}...")
+    
+    # Debug environment variables
+    print(f"🔑 TELEGRAM_TOKEN: {'✅ Set' if config.TELEGRAM_TOKEN else '❌ Missing'}")
+    print(f"🤖 GEMINI_API_KEY: {'✅ Set' if config.GEMINI_API_KEY else '❌ Missing'}")
     if config.GEMINI_API_KEY:
-        print("🤖 Gemini AI integration enabled")
-    else:
-        print("⚠️ Gemini AI not configured - using fallback responses")
+        print(f"🔑 Gemini key length: {len(config.GEMINI_API_KEY)} chars")
+        print(f"🔑 Gemini key starts: {config.GEMINI_API_KEY[:10]}...")
     
     try:
         bot = ExecutionCoachBot(
